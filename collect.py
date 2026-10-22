@@ -33,7 +33,7 @@ TIMEOUT = 8
 WORKERS = 40
 LIMIT = int(os.environ.get("LIMIT", "0"))
 
-COUNTRIES = ["CN", "HK", "TW", "US", "GB", "JP", "KR", "DE",
+COUNTRIES = ["HK", "TW", "US", "GB", "JP", "KR", "DE",
              "FR", "CA", "AU", "ES", "IT", "NL", "IN", "BR", "RU"]
 
 
@@ -63,6 +63,12 @@ def aggregate():
 
     add(rb_fetch("/json/stations/topvote/600"))
     add(rb_fetch("/json/stations/topclick/600"))
+    # 中国台全量：不用 hidebroken 预筛（RB 的自检会过期），全抓回来自己验
+    try:
+        add(rb_fetch("/json/stations/search?countrycode=CN"
+                     "&order=votes&reverse=true&limit=10000"))
+    except Exception as e:
+        print(f"[CN] 全量聚合失败: {e}", file=sys.stderr)
     for cc in COUNTRIES:
         try:
             add(rb_fetch(f"/json/stations/search?countrycode={cc}"
