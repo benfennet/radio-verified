@@ -121,7 +121,6 @@ def socket_alive(url):
         return False
 
 
-PLAYLIST_CTYPES = ("x-scpls", "pls+xml", "mpegurl", "x-mpegurl")
 
 
 def extract_stream(body):
@@ -144,8 +143,19 @@ def verify(s, depth=0):
     if pr["status"] not in (200, 206):
         return None
     ctype = pr["ctype"]
-    # 播放列表文件：解析一层
-    if any(t in ctype for t in PLAYLIST_CTYPES) or url.lower().endswith((".pls", ".m3u")) and "mpegurl" not in ctype:
+    body_head = pr["body"][:600].decode("utf-8", "ignore") if pr["body"] else ""
+    # 先认 HLS：m3u8 的 Content-Type 同属 mpegurl 家族，不能被下面的列表解析误伤
+    is_hls = (url.split("?")[0].lower().endswith(".m3u8")
+              or "#EXT-X-" in body_head)
+    if is_hls:
+        if "text/html" in ctype:
+            return None
+        rec = _record(s, url)
+        rec["hls"] = 1 if (url.startswith("https://") and pr["cors"]) else 0
+        rec["mode"] = "hls"
+        return rec if rec["name"] else None
+    # 播放列表文件（.pls 等）：解析一层
+    if any(t in ctype for t in ("x-scpls", "pls+xml")) or url.lower().endswith(".pls"):
         if depth >= 1:
             return None
         inner = extract_stream(pr["body"])
@@ -156,7 +166,15 @@ def verify(s, depth=0):
         return verify(s, depth + 1)
     if "text/html" in ctype:
         return None
-    rec = {
+    rec = _record(s, url)
+    rec["mode"] = "direct" if (url.startswith("https://") and pr["cors"]) else "proxy"
+    if not rec["name"]:
+        return None
+    return rec
+
+
+def _record(s, url):
+    return {
         "stationuuid": s.get("stationuuid", ""),
         "name": (s.get("name") or "").strip(),
         "url_resolved": url,
@@ -169,14 +187,6 @@ def verify(s, depth=0):
         "bitrate": s.get("bitrate", 0),
         "codec": s.get("codec", ""),
     }
-    if ".m3u8" in url or "mpegurl" in ctype:
-        rec["hls"] = 1 if (url.startswith("https://") and pr["cors"]) else 0
-        rec["mode"] = "hls"
-    else:
-        rec["mode"] = "direct" if (url.startswith("https://") and pr["cors"]) else "proxy"
-    if not rec["name"]:
-        return None
-    return rec
 
 
 def main():
