@@ -87,12 +87,14 @@ def cors_ok(headers):
     return acao in ("*", APP_ORIGIN)
 
 
-def probe(url):
-    """GET 少量字节判活。返回 dict(status, ctype, cors, body_head) 或 None。"""
-    req = urllib.request.Request(url, headers={
-        "User-Agent": UA, "Origin": APP_ORIGIN,
-        "Referer": APP_ORIGIN + "/radio/", "Range": "bytes=0-2047",
-    })
+def probe(url, minimal=False):
+    """GET 少量字节判活。返回 dict(status, ctype, cors, body_head) 或 None。
+    minimal=True 时不带 Origin/Referer（有些官方台只认自家域名跨域，带头反而 403）。"""
+    hdrs = {"User-Agent": UA, "Range": "bytes=0-2047"}
+    if not minimal:
+        hdrs["Origin"] = APP_ORIGIN
+        hdrs["Referer"] = APP_ORIGIN + "/radio/"
+    req = urllib.request.Request(url, headers=hdrs)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             body = r.read(2048)
@@ -176,6 +178,13 @@ def verify(s, depth=0):
         if not socket_alive(url):
             return None
         pr = {"status": 200, "ctype": "", "cors": False, "body": b""}
+    if pr["status"] in (401, 403):
+        # 门禁台降格重试（2026-10-24 经济之声 ngcdn 实锤）：带跨域头被 403、
+        # 不带头却能播的台，别误杀——不带头验过就收录，cors 标 False 走代理路
+        pr2 = probe(url, minimal=True)
+        if pr2 and pr2["status"] in (200, 206):
+            pr2["cors"] = False
+            pr = pr2
     if pr["status"] not in (200, 206):
         return None
     ctype = pr["ctype"]
@@ -228,13 +237,16 @@ def _record(s, url):
 
 def merge_dups(kept):
     """同台选优（2026-10-23）：同名同地区的重复条目合并成一条——RB 里同台常有多个
-    条目（不同码率/镜像），列表里占好几行还参差。按（名+国家+州省+流类型）分组，
-    码率高者为正本，其余地址并入 urls 按码率降序（收音机换源顺序=质量顺序），最多 4 个。
-    HLS 与普通流不混并（播放路径不同）。"""
+    条目（不同码率/镜像），列表里占好几行还参差。按（别名归一的名+国家+州省+流类型）分组，
+    正本排序：官方 CDN（ngcdn）> https > 码率 > 票数；其余地址并入 urls（收音机换源
+    顺序=质量顺序），最多 4 个。HLS 与普通流不混并（播放路径不同）。"""
+    # 别名归一：同台在 RB 里有两种叫法（经济之声 = CNR-2 经济之声），并成一组再选优
+    ALIAS = {"经济之声": "cnr-2 经济之声"}
     groups, order = {}, []
     for r in kept:
         fam = "hls" if r.get("mode") == "hls" else "stream"
-        key = (r["name"].strip().lower(), r.get("countrycode", ""),
+        nm = r["name"].strip()
+        key = (ALIAS.get(nm, nm).lower(), r.get("countrycode", ""),
                (r.get("state") or "").strip().lower(), fam)
         if key not in groups:
             groups[key] = []
@@ -246,7 +258,10 @@ def merge_dups(kept):
         if len(g) == 1:
             out.append(g[0])
             continue
-        g.sort(key=lambda r: (-(r.get("bitrate") or 0), -(r.get("votes") or 0)))
+        # 正本排序：官方 CDN（ngcdn，窗口宽）优先 > https > 码率高 > 票数高
+        g.sort(key=lambda r: (0 if "ngcdn" in (r.get("url_resolved") or "") else 1,
+                              0 if (r.get("url_resolved") or "").startswith("https://") else 1,
+                              -(r.get("bitrate") or 0), -(r.get("votes") or 0)))
         head = dict(g[0])
         urls = []
         for r in g:
