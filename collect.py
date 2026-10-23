@@ -196,6 +196,41 @@ def _record(s, url):
     }
 
 
+def merge_dups(kept):
+    """同台选优（2026-10-23）：同名同地区的重复条目合并成一条——RB 里同台常有多个
+    条目（不同码率/镜像），列表里占好几行还参差。按（名+国家+州省+流类型）分组，
+    码率高者为正本，其余地址并入 urls 按码率降序（收音机换源顺序=质量顺序），最多 4 个。
+    HLS 与普通流不混并（播放路径不同）。"""
+    groups, order = {}, []
+    for r in kept:
+        fam = "hls" if r.get("mode") == "hls" else "stream"
+        key = (r["name"].strip().lower(), r.get("countrycode", ""),
+               (r.get("state") or "").strip().lower(), fam)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(r)
+    out, merged = [], 0
+    for key in order:
+        g = groups[key]
+        if len(g) == 1:
+            out.append(g[0])
+            continue
+        g.sort(key=lambda r: (-(r.get("bitrate") or 0), -(r.get("votes") or 0)))
+        head = dict(g[0])
+        urls = []
+        for r in g:
+            for u in r.get("urls") or [r["url_resolved"]]:
+                if u not in urls:
+                    urls.append(u)
+        head["urls"] = urls[:4]
+        head["votes"] = max(r.get("votes") or 0 for r in g)
+        out.append(head)
+        merged += len(g) - 1
+    print(f"同台合并：{len(kept)} → {len(out)}（并掉 {merged} 条重复）", file=sys.stderr)
+    return out
+
+
 def main():
     stations = aggregate()
     if LIMIT:
@@ -209,6 +244,7 @@ def main():
                 modes[rec["mode"]] = modes.get(rec["mode"], 0) + 1
     kept.sort(key=lambda r: -r["votes"])
     print(f"收录 {len(kept)}/{len(stations)}；模式分布 {modes}", file=sys.stderr)
+    kept = merge_dups(kept)
 
     os.makedirs("out", exist_ok=True)
     with open("out/stations.json", "w", encoding="utf-8") as f:
