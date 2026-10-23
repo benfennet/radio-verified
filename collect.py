@@ -263,6 +263,8 @@ def merge_dups(kept):
                               0 if (r.get("url_resolved") or "").startswith("https://") else 1,
                               -(r.get("bitrate") or 0), -(r.get("votes") or 0)))
         head = dict(g[0])
+        # 显示名取组内最长的（CNR-2 经济之声 比 经济之声 更认得出是哪台）
+        head["name"] = max((r["name"] for r in g), key=len)
         urls = []
         for r in g:
             for u in r.get("urls") or [r["url_resolved"]]:
