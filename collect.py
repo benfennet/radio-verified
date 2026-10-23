@@ -189,6 +189,7 @@ def _record(s, url):
         "tags": s.get("tags", ""),
         "country": s.get("country", ""),
         "countrycode": s.get("countrycode", ""),
+        "state": (s.get("state") or "").strip(),
         "votes": s.get("votes", 0),
         "bitrate": s.get("bitrate", 0),
         "codec": s.get("codec", ""),
