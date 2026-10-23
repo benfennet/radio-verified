@@ -135,11 +135,41 @@ def extract_stream(body):
     return m[0] if m else None
 
 
+import urllib.parse as _up
+
+_TOKENISH = re.compile(r"(session|token|sign|auth|key|expire|hash|hdnea|^ws|serid|bindip)", re.I)
+
+
+def strip_signing(url):
+    """地址里若全是会话/签名类参数（央广 wsSession 那种），剥成裸地址——签名会过期、
+    裸地址由源站每次现发新签，条目不过期。含任何实质参数（如频道选择）则不剥，返回 None。"""
+    try:
+        p = _up.urlparse(url)
+    except Exception:
+        return None
+    if not p.query:
+        return None
+    pairs = _up.parse_qsl(p.query, keep_blank_values=True)
+    if not pairs or not all(_TOKENISH.search(k) for k, _ in pairs):
+        return None
+    return _up.urlunparse(p._replace(query=""))
+
+
 def verify(s, depth=0):
     """返回收录记录 dict 或 None。depth 是播放列表解析层数，最多 1 层。"""
     url = s.get("url_resolved") or ""
     if not url.startswith(("http://", "https://")):
         return None
+    # 先验裸地址（剥签名版）：活着就用裸的收录；验不过再回落原地址，老路一条不少
+    if depth == 0 and not s.get("_stripped"):
+        bare = strip_signing(url)
+        if bare and bare != url:
+            s2 = dict(s)
+            s2["url_resolved"] = bare
+            s2["_stripped"] = True
+            rec = verify(s2, depth)
+            if rec:
+                return rec
     pr = probe(url)
     if pr is None:
         # urllib 判不了的老式流，socket 兜底
